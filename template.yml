@@ -2,10 +2,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: A basic template for creating a Lambda-backed API Gateway for use as
-  a custom identity provider in AWS Transfer. It authenticates against an
-  entry in AWS Secrets Manager of the format server-id/username. Additionaly, the secret
-  must hold the key-value pairs for all user properties returned to AWS Transfer.
-  If you choose to also launch the AWS Transfer endpoint it will be provisioned with the SFTP protocol.
+  a custom identity provider in AWS Transfer. It also has a built-in capability to
+  limit the maximum number of active sessions each user can have in the system.
+  It authenticates against an entry in AWS Secrets Manager of the format 
+  server-id/username. Additionaly, the secret must hold the key-value pairs for 
+  all user properties returned to AWS Transfer. If you choose to also launch the 
+  AWS Transfer endpoint it will be provisioned with the SFTP protocol. The Session
+  count is stored in AWS ElastiCache (Memcached).
   This can be changed after launch. Note that FTP is only supported on VPC endpoints
   You can modify the Lambda function code to do something different after deployment.
 Parameters:
@@ -23,7 +26,8 @@ Parameters:
       - 'false'
     Type: String
     Description: Whether this stack creates an AWS ElasticCache. If CreateServer is not selected, this will
-      be disabled as well.
+      be disabled as well. If TransferVPCID and TransferSubnetIDs are not provided, this will be disabled as
+      well.
     Default: 'true'
   SecretsManagerRegion:
     Type: String
@@ -69,7 +73,10 @@ Parameters:
       - cache.r4.4xlarge
       - cache.r4.8xlarge
       - cache.r4.16xlarge
-
+  DefaultMaxSessionLimit:
+    Description: Specific the number of active sessions each user can have. This can be overridden in Secrets Manager by user config.
+    Type: String
+    Default: '100'
 Conditions:
   CreateServer:
     Fn::Equals:
@@ -307,6 +314,7 @@ Resources:
       Role:
         Fn::GetAtt: LambdaExecutionRole.Arn
       Runtime: python3.7
+      Timeout: 10
       VpcConfig:
         !If
         - CreateCacheServer
@@ -333,6 +341,7 @@ Resources:
               - CreateCacheServer
               - Fn::GetAtt: ElastiCacheCluster.ConfigurationEndpoint.Port
               - Ref: AWS::NoValue
+          DefaultMaxSessionLimit: !Ref DefaultMaxSessionLimit
   GetUserConfigLambdaPermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -480,6 +489,7 @@ Resources:
       Role:
         Fn::GetAtt: LambdaExecutionRole.Arn
       Runtime: python3.7
+      Timeout: 10
       VpcConfig:
         SecurityGroupIds:
           - Fn::GetAtt: ElastiCacheSecurityGroup.GroupId
@@ -535,3 +545,12 @@ Resources:
       IpProtocol: tcp
       FromPort: 11211
       ToPort: 11211
+  ElastiCacheSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateCacheServer
+    Properties:
+      GroupId: !Ref ElastiCacheSecurityGroup
+      SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443

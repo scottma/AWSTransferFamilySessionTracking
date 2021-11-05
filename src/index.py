@@ -63,6 +63,8 @@ def lambda_handler(event, context):
                 return build_response(secret_dict, authentication_type, input_protocol)
             print("User failed authentication return empty response")
             return {}
+        print("User failed authentication return empty response. User authenicated:{} sshkey_checked:{} ip_match:{}".format(user_authenticated,sshkey_checked,ip_match))
+        return {}
     else:
         # Otherwise something went wrong. Most likely the object name is not there
         print("Secrets Manager exception thrown - Returning empty response")
@@ -172,7 +174,6 @@ def get_secret(id):
 
     # Create a Secrets Manager client
     client = boto3.session.Session().client(service_name="secretsmanager", region_name=region)
-
     try:
         resp = client.get_secret_value(SecretId=id)
         # Decrypts secret using the associated KMS CMK.
@@ -186,25 +187,29 @@ def get_secret(id):
     except ClientError as err:
         print("Error Talking to SecretsManager: " + err.response["Error"]["Code"] + ", Message: " +
               err.response["Error"]["Message"])
-        return None
+    return None
 
 def valid_concurrent_connection(input_username, secret_dict, input_protocol):
 
-    max_login = 2
+    max_session = 10
 
-    secret_max_login = lookup(secret_dict, "MaxLogin", input_protocol)
-    if secret_max_login:
-        max_login = int(secret_max_login)
+    default_max_session_limit = os.getenv("DefaultMaxSessionLimit")
 
-    print( "Max Login: {}".format(max_login))
+    # Get the default session limit for the server
+    if (default_max_session_limit is not None):
+        max_session = int(default_max_session_limit)
 
-    
-    endpoint = os.getenv("ElastiCacheEndpoint")
-    port = os.getenv("ElastiCacheEndpointPort")
+    # check to see if this is overridden by user setting
+    secrets_manager_max_login = lookup(secret_dict, "MaxSessionLimit", input_protocol)
+    if secrets_manager_max_login:
+        max_session = int(secrets_manager_max_login)
 
-    if (endpoint is not None) and (port is not None):
-        elasticache_config_endpoint = "{}:{}".format(endpoint,port)
-        print("elastic cache endpoint: " + elasticache_config_endpoint)
+    ec_endpoint = os.getenv("ElastiCacheEndpoint")
+    ec_port = os.getenv("ElastiCacheEndpointPort")
+
+    # if ec_endpoint is not set, that mean the cache server is not deployed and this check will by skipped.
+    if (ec_endpoint is not None) and (ec_port is not None):
+        elasticache_config_endpoint = "{}:{}".format(ec_endpoint,ec_port)
         nodes = elasticache_auto_discovery.discover(elasticache_config_endpoint)
         nodes = map(lambda x: (x[1], int(x[2])), nodes)
         memcache_client = HashClient(nodes)
@@ -217,17 +222,13 @@ def valid_concurrent_connection(input_username, secret_dict, input_protocol):
             return True
         else:
             login_count = int(b_login_count.decode('utf-8'))
-            if login_count >= max_login:
+            if login_count >= max_session:
                 print("Too many logins")
                 return False
             else:
                 memcache_client.incr(input_username,1)
-                print( "user {} Connection {} out of {}".format(input_username, login_count+1, max_login))
+                print( "user {} Connection {} out of {}".format(input_username, login_count+1, max_session))
                 return True
-
-    else:
-        print("multiple session is not checked.")
-
     return True
     
     
