@@ -1,4 +1,3 @@
 
 .DS_Store
-samconfig.toml
-samconfig.toml.backup
+samconfig.*

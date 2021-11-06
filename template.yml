@@ -105,6 +105,15 @@ Conditions:
     Fn::Equals:
       - Ref: TransferEndpointType
       - 'VPC'
+  CreateVPCEndpoint: 
+    !And
+      - !Equals ['PUBLIC', !Ref TransferEndpointType]
+      - !Equals ['true', !Ref CreateCacheServer]
+      - !Equals ['true', !Ref CreateServer]
+      - !Not
+        - !Equals ['', !Ref TransferVPCID] 
+      - !Not
+        - !Equals ['', !Ref TransferSubnetIDs] 
 Outputs:
   ServerId:
     Value:
@@ -320,7 +329,7 @@ Resources:
         - CreateCacheServer
         - 
           SecurityGroupIds:
-            - !GetAtt ElastiCacheSecurityGroup.GroupId
+            - !GetAtt LambdaFunctionSecurityGroup.GroupId
           SubnetIds:
             Fn::Split: [',', Ref: TransferSubnetIDs]
         - !Ref "AWS::NoValue"
@@ -477,7 +486,7 @@ Resources:
       NumCacheNodes: 1
       CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
       VpcSecurityGroupIds:
-        [ Fn::GetAtt: ElastiCacheSecurityGroup.GroupId ]
+        [ Fn::GetAtt: LambdaFunctionSecurityGroup.GroupId ]
 
   FTPSessionTrackingLambda:
     Type: AWS::Serverless::Function
@@ -492,7 +501,7 @@ Resources:
       Timeout: 10
       VpcConfig:
         SecurityGroupIds:
-          - Fn::GetAtt: ElastiCacheSecurityGroup.GroupId
+          - Fn::GetAtt: LambdaFunctionSecurityGroup.GroupId
         SubnetIds:
           Fn::Split: [',', Ref: TransferSubnetIDs]
       Environment:
@@ -526,7 +535,7 @@ Resources:
       SourceArn: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/transfer/${TransferServer.ServerId}:*"
       SourceAccount:
         Ref: "AWS::AccountId"
-  ElastiCacheSecurityGroup:
+  LambdaFunctionSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Condition: CreateCacheServer
     Properties:
@@ -535,22 +544,36 @@ Resources:
         Ref: TransferVPCID
       Tags:
         - Key: Name
-          Value: !Sub "${AWS::StackName}-ElastiCacheSecurityGroup"
-  ElastiCacheSecurityGroupIngress:
+          Value: !Sub "${AWS::StackName}-LambdaSecurityGroup"
+  LambdaFunctionSecurityGroupIngress11211:
     Type: AWS::EC2::SecurityGroupIngress
     Condition: CreateCacheServer
     Properties:
-      GroupId: !Ref ElastiCacheSecurityGroup
-      SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+      GroupId: !Ref LambdaFunctionSecurityGroup
+      SourceSecurityGroupId: !Ref LambdaFunctionSecurityGroup
       IpProtocol: tcp
       FromPort: 11211
       ToPort: 11211
-  ElastiCacheSecurityGroupIngress:
+  LambdaFunctionSecurityGroupIngress443:
     Type: AWS::EC2::SecurityGroupIngress
     Condition: CreateCacheServer
     Properties:
-      GroupId: !Ref ElastiCacheSecurityGroup
-      SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+      GroupId: !Ref LambdaFunctionSecurityGroup
+      SourceSecurityGroupId: !Ref LambdaFunctionSecurityGroup
       IpProtocol: tcp
       FromPort: 443
       ToPort: 443
+  SecretManagerEndpoint:
+      Type: AWS::EC2::VPCEndpoint
+      Condition: CreateVPCEndpoint
+      Properties:
+        PrivateDnsEnabled: true
+        SecurityGroupIds:
+          - !GetAtt LambdaFunctionSecurityGroup.GroupId
+        ServiceName: !Sub "com.amazonaws.${AWS::Region}.secretsmanager"
+        SubnetIds:
+          Fn::Split: [',', Ref: TransferSubnetIDs]
+        VpcEndpointType: 'Interface'
+        VpcId:
+          Ref: TransferVPCID
+
